@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { X, ArrowUpRight, BookOpen, Volume2, Check } from 'lucide-react';
 import { STATUS_LABEL, localDay, addDays, type Word, type Status, type Review } from '../models';
 import { accuracy } from '../algorithms';
@@ -126,15 +126,29 @@ export function Progress({ value, className = '' }: { value: number; className?:
   );
 }
 export function TrendChart({ reviews, days = 14 }: { reviews: Review[]; days?: number }) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(640);
+  useEffect(() => {
+    const element = chartRef.current!;
+    const observer = new ResizeObserver(([entry]) => {
+      setWidth(Math.max(240, entry.contentRect.width));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const points = Array.from({ length: days }, (_, i) => {
     const date = addDays(localDay(), i - days + 1);
     const rows = reviews.filter((r) => localDay(new Date(r.time)) === date);
     return { date, count: rows.length, rate: accuracy(rows) };
   });
-  const w = 640,
+  const w = width,
     h = 190,
-    pad = 35;
-  const x = (i: number) => pad + (i * (w - pad - 14)) / (days - 1);
+    pad = 42;
+  const tickCount = w < 400 ? 3 : 6;
+  const tickIndexes = new Set(
+    Array.from({ length: tickCount + 1 }, (_, i) => Math.round((i * (days - 1)) / tickCount)),
+  );
+  const x = (i: number) => pad + (i * (w - pad - 24)) / (days - 1);
   const y = (rate: number) => h - 30 - (rate / 100) * (h - 45);
   const path = points
     .map((p, i) => `${i === 0 || !points[i - 1].count ? 'M' : 'L'}${x(i)},${y(p.rate)}`)
@@ -142,7 +156,7 @@ export function TrendChart({ reviews, days = 14 }: { reviews: Review[]; days?: n
     .join(' ');
   const total = points.reduce((n, p) => n + p.count, 0);
   return (
-    <div className="chart">
+    <div className="chart" ref={chartRef}>
       <svg
         viewBox={`0 0 ${w} ${h}`}
         role="img"
@@ -170,7 +184,7 @@ export function TrendChart({ reviews, days = 14 }: { reviews: Review[]; days?: n
                 {p.date}：{p.count} 次复习
               </title>
             </rect>
-            {(i === 0 || i === days - 1 || i % Math.ceil(days / 6) === 0) && (
+            {tickIndexes.has(i) && (
               <text x={x(i)} y={h - 5} textAnchor="middle" className="chart-label">
                 {p.date.slice(5).replace('-', '/')}
               </text>
