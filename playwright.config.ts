@@ -6,7 +6,8 @@ export default defineConfig({
   workers: 1,
   use: {
     baseURL: 'http://127.0.0.1:4173/cet4-web/',
-    channel: process.platform === 'win32' ? 'msedge' : undefined,
+    // Validate persistent file handles on the currently shipped desktop browsers.
+    channel: process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome'),
     viewport: { width: 1440, height: 1080 },
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',

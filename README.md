@@ -117,7 +117,7 @@ npm run build
 npm run preview
 ```
 
-浏览器验证：构建后执行 `npm run test:e2e`。Windows 默认使用已安装的 Edge，Linux 首次需 `npx playwright install --with-deps chromium`。测试覆盖导航、手机布局、词库编辑、复习、原生浏览器文件读写与冲突、存档往返以及离线启动。
+浏览器验证：构建后执行 `npm run test:e2e`。Windows 默认使用稳定版 Edge，Linux 使用稳定版 Chrome，首次需 `npx playwright install --with-deps chrome`；也可通过 `PLAYWRIGHT_CHANNEL` 指定浏览器。测试覆盖导航、手机布局、词库编辑、复习、原生浏览器文件读写与冲突、存档往返以及离线启动。
 
 也可双击 `start.bat` 启动开发预览。默认子路径 `/cet4-web/`，预览地址 `http://127.0.0.1:4173/cet4-web/`。默认 build 自动把 Skill 打包到发布目录。重新绘制应用图标的维护脚本 `scripts/create_icons.py` 需要 Pillow，正常构建使用已提交的图标，无需 Pillow。
 
