@@ -10,7 +10,7 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta
 from repository import Repository, ConflictError
 from scheduler import new_word, apply_review, queue, now
-from validator import validate, ensure, RESULTS
+from validator import validate, ensure, number, RESULTS
 
 
 def emit(value):
@@ -20,6 +20,55 @@ def emit(value):
 def check_revision(library, expected):
     if expected is not None and library['revision'] != expected:
         raise ConflictError(f"Expected revision {expected}, found {library['revision']}. Reload and reconcile before retrying.")
+
+
+def add_batch(repo, payload, expected_revision=None):
+    """Add untested vocabulary in one commit; existing learning state is never replaced."""
+    ensure(isinstance(payload, dict), 'Batch must be an object with expected_revision and words')
+    rows = payload.get('words')
+    expected = expected_revision if expected_revision is not None else payload.get('expected_revision')
+    ensure(number(expected, True), 'A non-negative expected_revision is required')
+    ensure(isinstance(rows, list) and rows, 'words must be a non-empty array')
+    library = repo.load()
+    additions = {}
+    skipped_existing, skipped_duplicates = [], []
+    text_fields = ['phonetic', 'notes']
+    list_fields = ['tags', 'collocations', 'synonyms', 'antonyms', 'word_family']
+    allowed = {'word', 'core_meaning', 'pos', *text_fields, *list_fields}
+    for index, row in enumerate(rows):
+        ensure(isinstance(row, dict), f'Invalid word at row {index + 1}')
+        ensure(not (set(row) - allowed), f'Unsupported fields at row {index + 1}: {", ".join(sorted(set(row) - allowed))}')
+        ensure(isinstance(row.get('word'), str) and row['word'].strip(), f'Missing word at row {index + 1}')
+        ensure(isinstance(row.get('core_meaning'), str) and row['core_meaning'].strip(), f'Missing core meaning at row {index + 1}')
+        ensure(isinstance(row.get('pos', ''), str), f'Invalid pos at row {index + 1}')
+        key = row['word'].strip().lower()
+        word = new_word(key, row['core_meaning'], row.get('pos', '').strip())
+        for field in text_fields:
+            if field in row:
+                ensure(isinstance(row[field], str), f'Invalid {field}: {key}')
+                word[field] = row[field].strip()
+        for field in list_fields:
+            if field in row:
+                ensure(isinstance(row[field], list) and all(isinstance(v, str) for v in row[field]), f'Invalid {field}: {key}')
+                values = (['CET4'] if field == 'tags' else []) + row[field]
+                word[field] = list(dict.fromkeys(v.strip() for v in values if v.strip()))
+        validate({**library, 'words': {key: word}})
+        if key in library['words']:
+            if key not in skipped_existing:
+                skipped_existing.append(key)
+        elif key in additions:
+            if key not in skipped_duplicates:
+                skipped_duplicates.append(key)
+        else:
+            additions[key] = word
+    result = library
+    if additions:
+        check_revision(library, expected)
+        next_library = deepcopy(library)
+        next_library['words'].update(additions)
+        result = repo.save(library, next_library)
+    return {'added': len(additions), 'words': list(additions), 'skipped_existing': skipped_existing,
+            'skipped_duplicates': skipped_duplicates, 'total': len(result['words']), 'revision': result['revision']}
 
 
 def record_batch(repo, payload, expected_revision=None):
@@ -83,7 +132,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--home', help='CET4 data directory (otherwise CET4_VOCAB_HOME or ~/Documents/CET4-Vocab)')
     commands = parser.add_subparsers(dest='command', required=True)
-    for cmd in ['init', 'all', 'stats', 'validate', 'backup']:
+    for cmd in ['init', 'all', 'catalog', 'stats', 'validate', 'backup']:
         commands.add_parser(cmd).add_argument('--json', action='store_true', help='Output is always machine-readable JSON')
     due = commands.add_parser('due')
     due.add_argument('--limit', type=int, default=30)
@@ -94,6 +143,9 @@ def main(argv=None):
     batch = commands.add_parser('record-batch')
     batch.add_argument('file')
     batch.add_argument('--expect-revision', type=int)
+    add_words = commands.add_parser('add-batch', help='Add a JSON batch of new words without changing existing learning state')
+    add_words.add_argument('file')
+    add_words.add_argument('--expect-revision', type=int)
     add = commands.add_parser('add')
     add.add_argument('word')
     add.add_argument('--meaning', required=True)
@@ -119,9 +171,15 @@ def main(argv=None):
     if args.command == 'record-batch':
         emit(record_batch(repo, json.loads(Path(args.file).read_text(encoding='utf-8-sig')), args.expect_revision))
         return 0
+    if args.command == 'add-batch':
+        emit(add_batch(repo, json.loads(Path(args.file).read_text(encoding='utf-8-sig')), args.expect_revision))
+        return 0
     library = repo.load()
     if args.command == 'all':
         emit(library)
+    elif args.command == 'catalog':
+        emit({'home': str(repo.home), 'revision': library['revision'], 'total': len(library['words']),
+              'new_count': sum(w['status'] == 'new' for w in library['words'].values()), 'words': sorted(library['words'])})
     elif args.command == 'due':
         ensure(1 <= args.limit <= 100, 'limit must be 1..100')
         emit({'revision': library['revision'], 'home': str(repo.home), 'words': queue(library['words'].values(), args.limit)})

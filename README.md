@@ -92,6 +92,16 @@ python skills/cet4-vocab-coach/scripts/vocab.py validate
 
 Skill 写完后在网页点击「重新加载」；网页写完后 Skill 再读取。无需提交学习记录到 GitHub。详细协议和批量结果格式见 [Skill](skills/cet4-vocab-coach/SKILL.md) 与 [数据协议](skills/cet4-vocab-coach/references/DATA_SCHEMA.md)。
 
+### 用一句话补充新词
+
+初始 48 个词只是练习起点。调用最新版 Skill 时可以直接说：
+
+> 用 cet4-vocab-coach 帮我补充下一批 20 个四级新词，排除已有单词，保存到网页共用的词库，暂时不用测试。
+
+也可以指定「校园生活主题」「阅读常见动词」或提供自己的词表。Codex 负责选词、核心词义和搭配，脚本负责整批校验、去重、备份与保存；无需另外配置 AI API。已有词条和学习成绩保持原样，新词从未学习状态开始。保存后在网页点击「重新加载」，即可在词库的新词筛选中看到。每日复习仍混合安排到期旧词和新词。
+
+批量命令为 `python scripts/vocab.py --home <数据目录> add-batch <批次JSON>`，配合 `catalog --json` 获取当前 revision 和已有词清单。格式见 [批量补词协议](skills/cet4-vocab-coach/references/ADD_WORDS.md)。旧版 Skill 用户需重新下载最新版 ZIP 并更新本地 Skill。
+
 ## 保存、备份与边界
 
 - 每次保存比较 revision **及完整内容**，有外部改动就拒绝覆盖。必须重新加载后再编辑。

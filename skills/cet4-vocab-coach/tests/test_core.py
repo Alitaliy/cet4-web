@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from repository import Repository, ConflictError
 from scheduler import apply_review, new_word, queue
 from validator import validate
-from vocab import record_batch
+from vocab import add_batch, record_batch
 
 
 class RepositoryTests(unittest.TestCase):
@@ -53,6 +53,70 @@ class RepositoryTests(unittest.TestCase):
         batch['results'][0]['answer'] = 'different answer'
         with self.assertRaises(ValueError):
             record_batch(self.repo, batch)
+
+    def test_add_words_preserves_progress_and_creates_untested_words(self):
+        record_batch(self.repo, [{'word': 'affect', 'result': 'correct', 'answer': '影响'}])
+        before = self.repo.load()
+        history = self.repo.reviews()
+        batch = {'expected_revision': before['revision'], 'words': [
+            {'word': 'AFFECT', 'core_meaning': '不得覆盖'},
+            {'word': ' abundant ', 'core_meaning': '丰富的', 'pos': 'adj.', 'tags': ['AI选词', 'AI选词'], 'collocations': ['abundant resources'], 'notes': '原创例句'},
+            {'word': 'ABUNDANT', 'core_meaning': '丰富的'},
+            {'word': 'allocate', 'core_meaning': '分配', 'pos': 'v.'},
+        ]}
+        result = add_batch(self.repo, batch)
+        self.assertEqual(result['added'], 2)
+        self.assertEqual(result['skipped_existing'], ['affect'])
+        self.assertEqual(result['skipped_duplicates'], ['abundant'])
+        self.assertEqual(result['total'], 50)
+        self.assertEqual(result['revision'], before['revision'] + 1)
+        after = self.repo.load()
+        for key, word in before['words'].items():
+            self.assertEqual(after['words'][key], word)
+        self.assertEqual(self.repo.reviews(), history)
+        word = after['words']['abundant']
+        self.assertEqual(word['status'], 'new')
+        self.assertEqual(word['stats']['seen'], 0)
+        self.assertIsNone(word['last_review'])
+        self.assertEqual(word['tags'], ['CET4', 'AI选词'])
+        self.assertEqual(word['schedule']['due_at'], date.today().isoformat())
+        self.assertEqual(word['meanings'][0]['pos'], 'adj.')
+        self.assertEqual(word['collocations'], ['abundant resources'])
+
+    def test_add_words_retry_has_no_write_or_extra_backup(self):
+        batch = {'expected_revision': 0, 'words': [{'word': 'abundant', 'core_meaning': '丰富的'}]}
+        add_batch(self.repo, batch)
+        before = self.repo.load()
+        files_before = {str(p.relative_to(self.repo.home)): p.read_bytes() for p in self.repo.home.rglob('*') if p.is_file()}
+        retry = add_batch(self.repo, batch)
+        self.assertEqual(retry['added'], 0)
+        self.assertEqual(retry['revision'], before['revision'])
+        files_after = {str(p.relative_to(self.repo.home)): p.read_bytes() for p in self.repo.home.rglob('*') if p.is_file()}
+        self.assertEqual(files_after, files_before)
+
+    def test_invalid_word_batch_does_not_partially_save(self):
+        for invalid in [
+            {'word': 'allocate', 'core_meaning': ' '},
+            {'word': 'bad123', 'core_meaning': '无效'},
+            {'word': 'allocate', 'core_meaning': '分配', 'status': 'mastered'},
+            {'word': 'allocate', 'core_meaning': '分配', 'collocations': [12]},
+        ]:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                add_batch(self.repo, {'expected_revision': 0, 'words': [{'word': 'abundant', 'core_meaning': '丰富的'}, invalid]})
+            self.assertEqual(self.repo.load(), self.initial)
+            self.assertEqual(self.repo.reviews(), [])
+            self.assertFalse((self.repo.home / 'data/pending.json').exists())
+
+    def test_add_words_rejects_stale_or_missing_revision(self):
+        row = {'word': 'abundant', 'core_meaning': '丰富的'}
+        for revision in [None, -1, True]:
+            with self.subTest(revision=revision), self.assertRaises(ValueError):
+                add_batch(self.repo, {'expected_revision': revision, 'words': [row]})
+        record_batch(self.repo, [{'word': 'affect', 'result': 'correct', 'answer': '影响'}])
+        before = self.repo.load()
+        with self.assertRaises(ConflictError):
+            add_batch(self.repo, {'expected_revision': 0, 'words': [row]})
+        self.assertEqual(self.repo.load(), before)
 
     def test_interrupted_commit_recovers_once(self):
         w, r = apply_review(self.initial['words']['affect'], 'wrong', '效果', 3000)
